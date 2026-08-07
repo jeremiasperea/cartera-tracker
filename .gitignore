@@ -1,0 +1,10 @@
+target/
+node_modules/
+.env
+.env.local
+*.swp
+*.swo
+*~
+.DS_Store
+graphify-out/
+.atl/

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cartera Tracker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <h1>Cartera</h1>
+    <div class="toolbar-actions">
+      <button id="btn-refresh" class="btn btn-primary">Actualizar cotizaciones</button>
+      <button id="btn-add">Agregar posicion</button>
+      <button id="btn-import-json">Importar JSON</button>
+      <button id="btn-import-csv">Importar CSV</button>
+      <button id="btn-export">Exportar JSON</button>
+      <input id="file-json" type="file" accept="application/json" hidden />
+      <input id="file-csv" type="file" accept=".csv,text/csv" hidden />
+    </div>
+  </header>
+
+  <p id="market-warning" class="warning" hidden></p>
+  <p id="market-meta" class="meta"></p>
+
+  <main>
+    <table id="tabla-cartera">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Nombre</th>
+          <th>Tipo</th>
+          <th class="num">Cantidad</th>
+          <th class="num">Precio compra</th>
+          <th class="num">Precio actual</th>
+          <th class="num">Variacion</th>
+          <th class="num">Valorizado</th>
+          <th class="num">Rendimiento</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tbody-cartera">
+        <!-- filas generadas por app.js -->
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="7">Total valorizado</td>
+          <td class="num" id="total-valorizado">—</td>
+          <td class="num" id="total-rendimiento">—</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+    <p id="tabla-vacia" class="empty-state" hidden>
+      Todavia no cargaste ninguna posicion. Usa "Agregar posicion", "Importar JSON"
+      o "Importar CSV" para empezar.
+    </p>
+  </main>
+
+  <dialog id="dialog-posicion">
+    <form id="form-posicion" method="dialog">
+      <h2 id="dialog-titulo">Nueva posicion</h2>
+      <input type="hidden" id="f-id" />
+
+      <label>
+        Ticker
+        <input id="f-ticker" required placeholder="AAPL" autocomplete="off" />
+      </label>
+
+      <label>
+        Nombre
+        <input id="f-nombre" required placeholder="Apple Inc." autocomplete="off" />
+      </label>
+
+      <label>
+        Tipo
+        <select id="f-tipo">
+          <option value="accion">Accion local</option>
+          <option value="cedear">CEDEAR</option>
+          <option value="bono">Bono</option>
+          <option value="on">Obligacion negociable</option>
+          <option value="nota">Letra / nota</option>
+          <option value="otro">Otro (sin cotizacion automatica)</option>
+        </select>
+      </label>
+
+      <label>
+        Cantidad
+        <input id="f-cantidad" type="number" step="any" min="0" required />
+      </label>
+
+      <label>
+        Precio promedio de compra
+        <input id="f-precio-compra" type="number" step="any" min="0" required />
+      </label>
+
+      <label>
+        Precio manual (opcional)
+        <input id="f-precio-manual" type="number" step="any" min="0"
+               placeholder="solo si no hay cotizacion automatica" />
+      </label>
+
+      <div class="dialog-actions">
+        <button type="button" id="btn-cancelar">Cancelar</button>
+        <button type="submit" class="btn-primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dialog-confirm-import">
+    <form method="dialog">
+      <h2>Reemplazar cartera</h2>
+      <p id="confirm-import-texto"></p>
+      <div class="dialog-actions">
+        <button type="button" id="btn-import-cancelar">Cancelar</button>
+        <button type="submit" id="btn-import-confirmar" class="btn-primary">
+          Reemplazar
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
