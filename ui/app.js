@@ -447,25 +447,45 @@ const PortfolioOps = (() => {
     });
   }
 
+  /// Unico camino de escritura de la cartera: aplica `next`, intenta guardar y
+  /// si el disco falla vuelve al estado anterior y avisa. Sin este rollback el
+  /// estado en memoria quedaria divergiendo del disco sin que el usuario lo sepa.
+  /// Devuelve true si se guardo.
+  async function replaceAllPositions(next, descripcion) {
+    const previas = State.getPositions();
+    State.setPositions(next);
+    try {
+      await Persistence.savePortfolio();
+    } catch (err) {
+      State.setPositions(previas);
+      UI.render();
+      alert(
+        `No pude guardar la cartera: ${err?.message ?? err}\n\n` +
+          `${descripcion} no se aplico.`
+      );
+      return false;
+    }
+    UI.render();
+    return true;
+  }
+
   async function addPosition(position) {
+    // Se arma un array nuevo en vez de mutar el actual: replaceAllPositions
+    // guarda el anterior por referencia para poder revertir.
     const positions = State.getPositions();
     const idx = positions.findIndex((x) => x.id === position.id);
-    if (idx >= 0) {
-      positions[idx] = position;
-    } else {
-      positions.push(position);
-    }
-    State.setPositions(positions);
-    await Persistence.savePortfolio();
-    UI.render();
+    const next =
+      idx >= 0
+        ? positions.map((x, i) => (i === idx ? position : x))
+        : [...positions, position];
+
+    return replaceAllPositions(next, "El alta/edicion de la posicion");
   }
 
   async function deletePosition(id) {
-    if (!confirm("¿Borrar esta posicion de la cartera?")) return;
-    const positions = State.getPositions().filter((x) => x.id !== id);
-    State.setPositions(positions);
-    await Persistence.savePortfolio();
-    UI.render();
+    if (!confirm("¿Borrar esta posicion de la cartera?")) return false;
+    const next = State.getPositions().filter((x) => x.id !== id);
+    return replaceAllPositions(next, "El borrado de la posicion");
   }
 
   return {
@@ -473,6 +493,7 @@ const PortfolioOps = (() => {
     normalizarPosicion,
     parsePositionsJson,
     parsePositionsCsv,
+    replaceAllPositions,
     addPosition,
     deletePosition,
   };
@@ -519,8 +540,11 @@ const Dialogs = (() => {
         : null,
     };
 
-    await PortfolioOps.addPosition(nueva);
-    UI.closeDialog("dialog-posicion");
+    // Si el guardado falla el dialogo queda abierto con lo que cargo el
+    // usuario, para que pueda reintentar sin retipear.
+    if (await PortfolioOps.addPosition(nueva)) {
+      UI.closeDialog("dialog-posicion");
+    }
   }
 
   let pendingImport = null;
@@ -534,11 +558,15 @@ const Dialogs = (() => {
   }
 
   async function confirmImport() {
-    if (!pendingImport) return;
-    State.setPositions(pendingImport);
-    pendingImport = null;
-    await Persistence.savePortfolio();
-    UI.render();
+    if (!pendingImport) return false;
+    const ok = await PortfolioOps.replaceAllPositions(
+      pendingImport,
+      "El import"
+    );
+    // Solo se descarta el import si quedo guardado: si falla el disco, el
+    // usuario puede reintentar sin volver a elegir el archivo.
+    if (ok) pendingImport = null;
+    return ok;
   }
 
   function cancelImport() {
@@ -658,8 +686,9 @@ const EventWiring = (() => {
       .querySelector("form")
       .addEventListener("submit", async (ev) => {
         ev.preventDefault();
-        await Dialogs.confirmImport();
-        UI.closeDialog("dialog-confirm-import");
+        if (await Dialogs.confirmImport()) {
+          UI.closeDialog("dialog-confirm-import");
+        }
       });
 
     // Export
