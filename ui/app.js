@@ -275,9 +275,9 @@ const UI = (() => {
 })();
 
 // ============ COOLDOWN (manejo del cooldown con UI) ============
+// La duracion del cooldown vive solo en market.rs: acá siempre se arranca la
+// cuenta con los segundos que informa el backend, nunca con una constante local.
 const Cooldown = (() => {
-  const COOLDOWN_SECONDS = 300;
-
   function startCooldownCountdown(initialSeconds) {
     const timer = State.getCooldownTimer();
     if (timer) clearInterval(timer);
@@ -296,7 +296,6 @@ const Cooldown = (() => {
   }
 
   return {
-    COOLDOWN_SECONDS,
     startCooldownCountdown,
   };
 })();
@@ -350,16 +349,17 @@ const MarketOps = (() => {
       await Persistence.fetchQuotesFromBackend();
       UI.renderMarketMeta();
       UI.render();
-      Cooldown.startCooldownCountdown(Cooldown.COOLDOWN_SECONDS);
+      // El backend acaba de registrar el fetch: le preguntamos cuanto falta en
+      // vez de asumir la duracion, asi cambiarla en market.rs alcanza.
+      Cooldown.startCooldownCountdown(await Persistence.getCooldownStatus());
     } catch (err) {
-      const msg = String(err);
-      if (msg.startsWith("COOLDOWN:")) {
-        const restantes = parseInt(msg.split(":")[1], 10) || 0;
-        Cooldown.startCooldownCountdown(restantes);
+      // El backend devuelve MarketError etiquetado por `kind` (ver market.rs).
+      if (err?.kind === "cooldown") {
+        Cooldown.startCooldownCountdown(err.remaining_s);
       } else {
         State.setCooldownRemaining(0);
         UI.setCooldownButtonState(0);
-        alert(`No pude traer cotizaciones: ${msg}`);
+        alert(`No pude traer cotizaciones: ${err?.message ?? err}`);
       }
     }
   }

@@ -9,6 +9,19 @@ use tauri::{AppHandle, Manager};
 const COOLDOWN_SECONDS: i64 = 300; // 5 minutos, pedido explicitamente por el usuario
 const BASE_URL: &str = "https://data912.com";
 
+/// Errores que el frontend necesita distinguir por programa, no solo mostrar.
+/// Serializa como objeto etiquetado — {"kind":"cooldown","remaining_s":42} —
+/// asi el frontend hace `err.kind === "cooldown"` en vez de parsear un prefijo
+/// de string. Agregar una variante no rompe al que ya maneja las existentes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MarketError {
+    /// Todavia falta esperar `remaining_s` segundos para el proximo refresh.
+    Cooldown { remaining_s: i64 },
+    /// No se pudo construir el cliente HTTP. `message` es para mostrar.
+    Client { message: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Quote {
     pub symbol: String,
@@ -103,21 +116,27 @@ pub fn get_cooldown_status(app: AppHandle) -> i64 {
     (COOLDOWN_SECONDS - elapsed_s).max(0)
 }
 
-/// Trae cotizaciones de los 5 paneles relevantes. Devuelve Err("COOLDOWN:N")
-/// si todavia faltan N segundos: el frontend parsea ese prefijo para mostrar
-/// la cuenta regresiva. Es una convencion cruda a proposito, para no sumar
-/// otro tipo de error serializado solo para este caso.
+/// Trae cotizaciones de los paneles cubiertos por data912. Si el cooldown sigue
+/// activo devuelve MarketError::Cooldown con los segundos restantes, que el
+/// frontend usa para arrancar la cuenta regresiva.
+///
+/// Un panel que falla no aborta el refresh: se acumula en `errores` y se
+/// devuelve Ok con lo que si se pudo traer.
 #[tauri::command]
-pub async fn fetch_quotes(app: AppHandle) -> Result<MarketSnapshot, String> {
+pub async fn fetch_quotes(app: AppHandle) -> Result<MarketSnapshot, MarketError> {
     let remaining = get_cooldown_status(app.clone());
     if remaining > 0 {
-        return Err(format!("COOLDOWN:{remaining}"));
+        return Err(MarketError::Cooldown {
+            remaining_s: remaining,
+        });
     }
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
-        .map_err(|e| format!("no pude crear el cliente http: {e}"))?;
+        .map_err(|e| MarketError::Client {
+            message: format!("no pude crear el cliente http: {e}"),
+        })?;
 
     let mut panels: HashMap<String, HashMap<String, Quote>> = HashMap::new();
     let mut errores = Vec::new();
@@ -211,5 +230,31 @@ mod tests {
     fn corrupt_snapshot_json_deserializes_to_none() {
         assert!(serde_json::from_str::<MarketSnapshot>("{ no es json }").is_err());
         assert!(serde_json::from_str::<MarketSnapshot>("").is_err());
+    }
+
+    /// Contrato con el frontend: app.js hace `err.kind === "cooldown"` y lee
+    /// `err.remaining_s`. Cambiar el tag o el rename_all de MarketError romperia
+    /// la cuenta regresiva sin que nada falle en Rust.
+    #[test]
+    fn cooldown_error_matches_frontend_contract() {
+        let raw = serde_json::to_string(&MarketError::Cooldown { remaining_s: 42 })
+            .expect("serializa");
+        let v: serde_json::Value = serde_json::from_str(&raw).expect("es json");
+
+        assert_eq!(v["kind"], "cooldown");
+        assert_eq!(v["remaining_s"], 42);
+    }
+
+    /// El frontend muestra `err.message` para cualquier kind que no sea cooldown.
+    #[test]
+    fn client_error_carries_a_message_for_display() {
+        let raw = serde_json::to_string(&MarketError::Client {
+            message: "no pude crear el cliente http: timeout".to_string(),
+        })
+        .expect("serializa");
+        let v: serde_json::Value = serde_json::from_str(&raw).expect("es json");
+
+        assert_eq!(v["kind"], "client");
+        assert!(v["message"].as_str().expect("message es string").contains("timeout"));
     }
 }
