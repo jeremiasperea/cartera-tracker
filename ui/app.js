@@ -469,6 +469,7 @@ const PortfolioOps = (() => {
   }
 
   return {
+    generateId,
     normalizarPosicion,
     parsePositionsJson,
     parsePositionsCsv,
@@ -502,7 +503,10 @@ const Dialogs = (() => {
 
   async function savePositionFromDialog(ev) {
     ev.preventDefault();
-    const id = document.getElementById("f-id").value || PortfolioOps.generateId?.() || "";
+    // Sin `?.` a proposito: si generateId no estuviera disponible tiene que
+    // fallar fuerte, no producir un id vacio que haga que la proxima alta
+    // pise a esta.
+    const id = document.getElementById("f-id").value || PortfolioOps.generateId();
     const nueva = {
       id,
       ticker: document.getElementById("f-ticker").value.trim().toUpperCase(),
