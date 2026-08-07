@@ -318,6 +318,12 @@ const Persistence = (() => {
     State.setSnapshot(snapshot);
   }
 
+  // El backend persiste el snapshot al traerlo, así que acá solo lo leemos.
+  async function loadSnapshot() {
+    const snapshot = await invoke("read_snapshot");
+    if (snapshot) State.setSnapshot(snapshot);
+  }
+
   async function getCooldownStatus() {
     return await invoke("get_cooldown_status");
   }
@@ -326,6 +332,7 @@ const Persistence = (() => {
     loadPortfolio,
     savePortfolio,
     fetchQuotesFromBackend,
+    loadSnapshot,
     getCooldownStatus,
   };
 })();
@@ -668,8 +675,9 @@ const App = (() => {
     // Cargar configuración desde Rust
     await Config.load();
 
-    // Cargar cartera desde disco
+    // Cargar cartera y ultimas cotizaciones desde disco
     await Persistence.loadPortfolio();
+    await Persistence.loadSnapshot();
 
     // Renderizar UI inicial
     UI.render();

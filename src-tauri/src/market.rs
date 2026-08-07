@@ -1,3 +1,4 @@
+use crate::config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -7,11 +8,6 @@ use tauri::{AppHandle, Manager};
 
 const COOLDOWN_SECONDS: i64 = 300; // 5 minutos, pedido explicitamente por el usuario
 const BASE_URL: &str = "https://data912.com";
-
-// Paneles "live" de data912 que nos importan para una cartera tipica.
-// No existe panel de fideicomisos financieros ni de FCI: esos instrumentos
-// siempre van a quedar en "otro" y van a necesitar precio_manual.
-const PANELS: [&str; 5] = ["arg_stocks", "arg_cedears", "arg_bonds", "arg_corp", "arg_notes"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Quote {
@@ -33,14 +29,22 @@ pub struct MarketSnapshot {
     pub errores: Vec<String>,
 }
 
-fn cooldown_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("no pude resolver el directorio de datos de la app: {e}"))?;
     fs::create_dir_all(&dir)
         .map_err(|e| format!("no pude crear el directorio de datos ({}): {e}", dir.display()))?;
-    Ok(dir.join("cooldown.txt"))
+    Ok(dir)
+}
+
+fn cooldown_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(data_dir(app)?.join("cooldown.txt"))
+}
+
+fn snapshot_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(data_dir(app)?.join("snapshot.json"))
 }
 
 fn now_ms() -> i64 {
@@ -67,6 +71,26 @@ fn write_last_fetch(app: &AppHandle, ts: i64) {
         // no persiste entre reinicios de la app, que no es grave.
         let _ = fs::write(path, ts.to_string());
     }
+}
+
+fn write_snapshot(app: &AppHandle, snapshot: &MarketSnapshot) {
+    // Best-effort igual que el cooldown: si no se puede escribir, el refresh
+    // ya trajo los datos y el usuario los ve. Solo se pierde la persistencia.
+    if let Ok(path) = snapshot_path(app) {
+        if let Ok(raw) = serde_json::to_string(snapshot) {
+            let _ = fs::write(path, raw);
+        }
+    }
+}
+
+/// Ultimo snapshot guardado en disco, o None si nunca se trajeron cotizaciones.
+/// Un archivo corrupto se trata como ausente: un cache invalido no debe impedir
+/// que la app arranque, y el proximo refresh lo reescribe.
+#[tauri::command]
+pub fn read_snapshot(app: AppHandle) -> Option<MarketSnapshot> {
+    let path = snapshot_path(&app).ok()?;
+    let raw = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&raw).ok()
 }
 
 /// Segundos restantes de cooldown. 0 si ya se puede pedir cotizaciones de nuevo.
@@ -98,7 +122,7 @@ pub async fn fetch_quotes(app: AppHandle) -> Result<MarketSnapshot, String> {
     let mut panels: HashMap<String, HashMap<String, Quote>> = HashMap::new();
     let mut errores = Vec::new();
 
-    for panel in PANELS {
+    for panel in config::all_panels() {
         let url = format!("{BASE_URL}/live/{panel}");
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => match resp.json::<Vec<Quote>>().await {
@@ -114,13 +138,78 @@ pub async fn fetch_quotes(app: AppHandle) -> Result<MarketSnapshot, String> {
         }
     }
 
+    // Un unico timestamp para el cooldown y para el snapshot: si se llamara
+    // now_ms() dos veces, el cooldown y la fecha mostrada podrian diferir.
+    let fetched_at_ms = now_ms();
+
     // Marcamos el intento como "gastado" aunque algunos paneles hayan fallado:
     // asi el cooldown sigue haciendo su trabajo (no permitir reintentos en loop).
-    write_last_fetch(&app, now_ms());
+    write_last_fetch(&app, fetched_at_ms);
 
-    Ok(MarketSnapshot {
-        fetched_at_ms: now_ms(),
+    let snapshot = MarketSnapshot {
+        fetched_at_ms,
         panels,
         errores,
-    })
+    };
+
+    // Persistimos para que recargar la app no pierda las cotizaciones ya
+    // traidas: el cooldown se guardaba en disco pero el snapshot no, asi que
+    // tras un reinicio el usuario quedaba esperando sin datos que mostrar.
+    write_snapshot(&app, &snapshot);
+
+    Ok(snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_snapshot() -> MarketSnapshot {
+        let mut stocks = HashMap::new();
+        stocks.insert(
+            "GGAL".to_string(),
+            Quote {
+                symbol: "GGAL".to_string(),
+                c: Some(7250.5),
+                pct_change: Some(-1.25),
+                px_bid: Some(7240.0),
+                px_ask: None,
+            },
+        );
+        let mut panels = HashMap::new();
+        panels.insert("arg_stocks".to_string(), stocks);
+
+        MarketSnapshot {
+            fetched_at_ms: 1_770_000_000_000,
+            panels,
+            errores: vec!["arg_bonds: HTTP 503".to_string()],
+        }
+    }
+
+    /// El snapshot se guarda como JSON y se relee al arrancar la app: si algun
+    /// campo no sobrevive el round-trip, el usuario recupera datos incompletos.
+    #[test]
+    fn snapshot_survives_json_round_trip() {
+        let original = sample_snapshot();
+        let raw = serde_json::to_string(&original).expect("serializa");
+        let restored: MarketSnapshot = serde_json::from_str(&raw).expect("deserializa");
+
+        assert_eq!(restored.fetched_at_ms, original.fetched_at_ms);
+        assert_eq!(restored.errores, original.errores);
+
+        let quote = &restored.panels["arg_stocks"]["GGAL"];
+        assert_eq!(quote.symbol, "GGAL");
+        assert_eq!(quote.c, Some(7250.5));
+        assert_eq!(quote.pct_change, Some(-1.25));
+        assert_eq!(quote.px_bid, Some(7240.0));
+        assert_eq!(quote.px_ask, None);
+    }
+
+    /// Un snapshot.json corrupto se trata como "no hay cache", no como un error
+    /// que impida arrancar: read_snapshot devuelve None en vez de propagar.
+    #[test]
+    fn corrupt_snapshot_json_deserializes_to_none() {
+        assert!(serde_json::from_str::<MarketSnapshot>("{ no es json }").is_err());
+        assert!(serde_json::from_str::<MarketSnapshot>("").is_err());
+    }
 }

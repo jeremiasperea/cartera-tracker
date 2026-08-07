@@ -13,6 +13,7 @@ fn main() {
             portfolio::portfolio_file_path,
             market::get_cooldown_status,
             market::fetch_quotes,
+            market::read_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar la aplicacion");
