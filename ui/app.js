@@ -259,11 +259,25 @@ const UI = (() => {
     }
   }
 
+  // El <select> de tipos arranca vacio en index.html y se llena desde Config:
+  // asi agregar un instrumento en config.rs alcanza para que sea seleccionable.
+  function renderInstrumentTypeOptions() {
+    const select = document.getElementById("f-tipo");
+    select.innerHTML = "";
+    for (const type of Config.getInstrumentTypes()) {
+      const option = document.createElement("option");
+      option.value = type.id;
+      option.textContent = type.form_label;
+      select.appendChild(option);
+    }
+  }
+
   return {
     render() {
       renderPortfolioTable();
     },
     renderMarketMeta,
+    renderInstrumentTypeOptions,
     setCooldownButtonState,
     showDialog(dialogId) {
       document.getElementById(dialogId).showModal();
@@ -705,8 +719,9 @@ const EventWiring = (() => {
 // ============ APP (inicialización) ============
 const App = (() => {
   async function initialize() {
-    // Cargar configuración desde Rust
+    // Cargar configuración desde Rust y volcarla al desplegable del dialogo
     await Config.load();
+    UI.renderInstrumentTypeOptions();
 
     // Cargar cartera y ultimas cotizaciones desde disco
     await Persistence.loadPortfolio();

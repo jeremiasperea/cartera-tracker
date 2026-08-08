@@ -74,14 +74,9 @@
 
       <label>
         Tipo
-        <select id="f-tipo">
-          <option value="accion">Accion local</option>
-          <option value="cedear">CEDEAR</option>
-          <option value="bono">Bono</option>
-          <option value="on">Obligacion negociable</option>
-          <option value="nota">Letra / nota</option>
-          <option value="otro">Otro (sin cotizacion automatica)</option>
-        </select>
+        <!-- Las opciones las llena UI.renderInstrumentTypeOptions() desde
+             config.rs; dejarlas escritas aca las duplicaria. -->
+        <select id="f-tipo"></select>
       </label>
 
       <label>
