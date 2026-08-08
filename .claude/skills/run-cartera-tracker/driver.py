@@ -225,6 +225,25 @@ def cmd_click(args):
     print(f"clic en ventana({wx},{wy}) = pantalla({sx},{sy})")
 
 
+def cmd_windows(_args):
+    """Lista los toplevels de :0. Los popups nativos de <select> abren como
+    ventana X aparte y NO salen en la captura de la ventana principal: hay que
+    capturarlos por su propio id con
+    ffmpeg -f x11grab -window_id <id> -video_size <W>x<H> -i :0 ..."""
+    out = subprocess.run(
+        ["xwininfo", "-root", "-children"],
+        env=app_env(), capture_output=True, text=True, timeout=10
+    ).stdout
+    main = load_state().get("wid")
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("0x") or "8192x8192" in line:
+            continue
+        wid = line.split()[0]
+        tag = "  <- principal" if wid == main else ""
+        print(f"  {line}{tag}")
+
+
 def cmd_state(_args):
     cd = APPDATA / "cooldown.txt"
     sn = APPDATA / "snapshot.json"
@@ -271,6 +290,20 @@ def cmd_quit(_args, quiet=False):
         print("app sigue viva" if alive else "app cerrada")
 
 
+def wait_until(pred, timeout, label):
+    """Esperar por una condicion en vez de dormir un rato fijo. fetch_quotes
+    hace 5 requests secuenciales con timeout de 15s cada uno: cualquier sleep
+    constante que sirva un dia falla al siguiente."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if pred():
+            print(f"  ({label} tras {timeout - (deadline - time.time()):.1f}s)")
+            return True
+        time.sleep(0.5)
+    print(f"  ({label} NO ocurrio en {timeout}s)")
+    return False
+
+
 def cmd_smoke(_args):
     """Flujo completo: arranque -> refresh real -> reinicio -> persistencia."""
     shots = pathlib.Path("/tmp/cartera-smoke")
@@ -292,7 +325,7 @@ def cmd_smoke(_args):
 
     print("\n== 2. traer cotizaciones (red real a data912.com) ==")
     cmd_click(["refresh"])
-    time.sleep(8)
+    wait_until(sn.exists, 90, "snapshot escrito")
     cmd_shot([str(shots / "02-con-datos.png")])
     check(sn.exists(), "fetch_quotes escribio snapshot.json")
     if sn.exists():
@@ -317,6 +350,8 @@ def cmd_smoke(_args):
     cmd_launch([])           # boton habilitado
     cmd_cooldown(["now"])    # el backend ahora rechaza
     cmd_click(["refresh"])
+    # Aca se espera un NO-evento (que no haya fetch), asi que no hay condicion
+    # por la cual esperar. El rechazo es inmediato: no toca la red.
     time.sleep(4)
     cmd_shot([str(shots / "04-cooldown.png")])
     after2 = json.loads(sn.read_text())["fetched_at_ms"] if sn.exists() else None
@@ -331,8 +366,8 @@ def cmd_smoke(_args):
 
 COMMANDS = {
     "launch": cmd_launch, "shot": cmd_shot, "click": cmd_click,
-    "state": cmd_state, "cooldown": cmd_cooldown, "quit": cmd_quit,
-    "smoke": cmd_smoke,
+    "windows": cmd_windows, "state": cmd_state, "cooldown": cmd_cooldown,
+    "quit": cmd_quit, "smoke": cmd_smoke,
 }
 
 if __name__ == "__main__":

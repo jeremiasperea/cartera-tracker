@@ -55,6 +55,7 @@ python3 .claude/skills/run-cartera-tracker/driver.py shot /tmp/a.png
 python3 .claude/skills/run-cartera-tracker/driver.py shot /tmp/top.png 0 60 1356 150
 python3 .claude/skills/run-cartera-tracker/driver.py click refresh
 python3 .claude/skills/run-cartera-tracker/driver.py click add
+python3 .claude/skills/run-cartera-tracker/driver.py windows
 python3 .claude/skills/run-cartera-tracker/driver.py state
 python3 .claude/skills/run-cartera-tracker/driver.py cooldown expired
 python3 .claude/skills/run-cartera-tracker/driver.py quit
@@ -113,6 +114,11 @@ a reimplementation.
 - **Weston reparents the window.** The toplevel named `cartera-tracker` is a
   10x10 stub; the real content window has no name. `driver.py` finds it by
   picking the largest sane top-level.
+- **Native `<select>` popups open as a separate X window** and are invisible in
+  a `-window_id` capture of the main window — the screenshot shows the closed
+  select as if the click did nothing. Run `driver.py windows` after clicking a
+  select to find the new toplevel, then grab it by its own id:
+  `ffmpeg -f x11grab -window_id <id> -video_size 378x140 -i :0 -frames:v 1 -y out.png`.
 - **XTEST `fake_input(MotionNotify)` moves the pointer *relatively*.** The
   first click silently lands wherever the cursor already was. Use
   `root.warp_pointer(x, y)` and confirm with `query_pointer()` before
