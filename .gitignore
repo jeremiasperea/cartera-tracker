@@ -8,3 +8,8 @@ node_modules/
 .DS_Store
 graphify-out/
 .atl/
+
+# Carteras reales: tenencias, cantidades y precios de compra. Este repo es
+# publico. El export del boton "Exportar JSON" tambien cae aca por el prefijo.
+# Los datos de ejemplo van en ejemplos/, anonimizados.
+cartera_*.json
