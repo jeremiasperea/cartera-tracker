@@ -225,6 +225,65 @@ def cmd_click(args):
     print(f"clic en ventana({wx},{wy}) = pantalla({sx},{sy})")
 
 
+def _xtest_keys(seq):
+    """seq: lista de (keysym_name, [modificadores]) — ej [("l", ["ctrl"])]."""
+    from Xlib import X, XK, display
+    from Xlib.ext import xtest
+
+    d = display.Display(":0")
+    MODS = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L"}
+    for name, mods in seq:
+        code = d.keysym_to_keycode(XK.string_to_keysym(name))
+        if code == 0:
+            die(f"no pude mapear la tecla '{name}'")
+        mcodes = [d.keysym_to_keycode(XK.string_to_keysym(MODS[m])) for m in mods]
+        for mc in mcodes:
+            xtest.fake_input(d, X.KeyPress, mc)
+        xtest.fake_input(d, X.KeyPress, code)
+        xtest.fake_input(d, X.KeyRelease, code)
+        for mc in reversed(mcodes):
+            xtest.fake_input(d, X.KeyRelease, mc)
+        d.sync()
+        time.sleep(0.03)
+
+
+# Caracteres -> nombre de keysym X, para escribir rutas en dialogos nativos.
+KEYSYMS = {
+    "/": "slash", ".": "period", "_": "underscore", "-": "minus",
+    " ": "space", ":": ("colon", ["shift"]), "~": ("asciitilde", ["shift"]),
+}
+
+
+def cmd_type(args):
+    """Escribe texto en la ventana enfocada. Para dialogos GTK nativos (el
+    selector de archivos), que no son parte del webview."""
+    if not args:
+        die("uso: type <texto>")
+    seq = []
+    for ch in " ".join(args):
+        if ch in KEYSYMS:
+            k = KEYSYMS[ch]
+            seq.append(k if isinstance(k, tuple) else (k, []))
+        elif ch.isupper():
+            seq.append((ch.lower(), ["shift"]))
+        else:
+            seq.append((ch, []))
+    _xtest_keys(seq)
+    print(f"escrito: {' '.join(args)}")
+
+
+def cmd_key(args):
+    """Teclas sueltas: key Return / key Escape / key ctrl+l"""
+    if not args:
+        die("uso: key <Return|Escape|ctrl+l|...>")
+    seq = []
+    for spec in args:
+        parts = spec.split("+")
+        seq.append((parts[-1], parts[:-1]))
+    _xtest_keys(seq)
+    print(f"tecla: {' '.join(args)}")
+
+
 def cmd_windows(_args):
     """Lista los toplevels de :0. Los popups nativos de <select> abren como
     ventana X aparte y NO salen en la captura de la ventana principal: hay que
@@ -366,6 +425,7 @@ def cmd_smoke(_args):
 
 COMMANDS = {
     "launch": cmd_launch, "shot": cmd_shot, "click": cmd_click,
+    "type": cmd_type, "key": cmd_key,
     "windows": cmd_windows, "state": cmd_state, "cooldown": cmd_cooldown,
     "quit": cmd_quit, "smoke": cmd_smoke,
 }

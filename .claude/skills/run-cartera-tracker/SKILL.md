@@ -55,6 +55,9 @@ python3 .claude/skills/run-cartera-tracker/driver.py shot /tmp/a.png
 python3 .claude/skills/run-cartera-tracker/driver.py shot /tmp/top.png 0 60 1356 150
 python3 .claude/skills/run-cartera-tracker/driver.py click refresh
 python3 .claude/skills/run-cartera-tracker/driver.py click add
+python3 .claude/skills/run-cartera-tracker/driver.py key ctrl+l
+python3 .claude/skills/run-cartera-tracker/driver.py type /tmp/cl.json
+python3 .claude/skills/run-cartera-tracker/driver.py key Return
 python3 .claude/skills/run-cartera-tracker/driver.py windows
 python3 .claude/skills/run-cartera-tracker/driver.py state
 python3 .claude/skills/run-cartera-tracker/driver.py cooldown expired
@@ -65,7 +68,23 @@ python3 .claude/skills/run-cartera-tracker/driver.py quit
 it warns when a frame is nearly flat, which is what a failed render looks
 like. Button names for `click`: `refresh`, `add`, `import-json`,
 `import-csv`, `export`. `state` dumps the app-data dir (cooldown seconds
-left, snapshot size, panel names, quote count).
+left, snapshot size, panel names, quote count). `type` and `key` send XTEST
+keystrokes to the focused window — the only way to drive the native GTK
+dialogs, which are outside the webview.
+
+**Importing a JSON file end to end** (the flow that exercises
+`confirmImport`):
+
+```bash
+python3 .claude/skills/run-cartera-tracker/driver.py click import-json
+python3 .claude/skills/run-cartera-tracker/driver.py key ctrl+l    # barra de ubicacion GTK
+python3 .claude/skills/run-cartera-tracker/driver.py type /tmp/cl.json
+python3 .claude/skills/run-cartera-tracker/driver.py key Return
+python3 .claude/skills/run-cartera-tracker/driver.py click 810 538  # "Reemplazar"
+```
+
+The table is taller than the window with ~18 positions; `key End` scrolls to
+the totals row.
 
 ## Run (human path)
 
@@ -114,6 +133,11 @@ a reimplementation.
 - **Weston reparents the window.** The toplevel named `cartera-tracker` is a
   10x10 stub; the real content window has no name. `driver.py` finds it by
   picking the largest sane top-level.
+- **The file chooser is a native GTK dialog, not part of the webview** — no
+  amount of clicking inside the app window reaches it. Drive it with
+  `key ctrl+l` to open the location bar, then `type <path>`, then
+  `key Return`. Keep the path short: every character is a separate XTEST
+  keystroke, and `~` does not expand.
 - **Native `<select>` popups open as a separate X window** and are invisible in
   a `-window_id` capture of the main window — the screenshot shows the closed
   select as if the click did nothing. Run `driver.py windows` after clicking a
