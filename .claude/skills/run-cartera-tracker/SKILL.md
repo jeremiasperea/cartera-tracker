@@ -103,15 +103,20 @@ warning and falls back to software rendering.
 ## Test
 
 ```bash
-cd src-tauri && cargo test     # 6 tests
-node --check ui/app.js         # no JS test runner in this project
+cd src-tauri && cargo test          # 7 tests (Rust)
+node --test 'test/*.test.mjs'       # 35 tests (JS, node:test — sin dependencias)
 ```
 
-To exercise `ui/app.js` logic without a window, load the real file into a
-`node:vm` context with stubs for `window.__TAURI__`, `document`, `crypto`,
-`alert`, `confirm` — strip the trailing `App.initialize();` first, then
-expose the module consts via `globalThis`. That runs the shipped code, not
-a reimplementation.
+`test/helper.mjs` carga el `ui/app.js` real en un `node:vm` y devuelve sus
+módulos, así los tests corren el código que se envía y no una reimplementación.
+Lee `INSTRUMENT_TYPES` desde `config.rs`, de modo que un cambio en Rust no puede
+dejar los tests en verde por usar un fixture viejo.
+
+- **Pasá el glob.** `node --test` a secas también toma `test/helper.mjs` como
+  archivo de test y reporta un test fantasma de más (36 en vez de 35).
+- **`assert.deepStrictEqual` falla entre realms.** Los arrays creados dentro del
+  `vm` tienen otro `Array.prototype`, así que comparar contra `[]` da el
+  desconcertante `actual: [] expected: []`. Usá `plano(x)` del helper.
 
 ## Gotchas
 
