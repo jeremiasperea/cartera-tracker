@@ -51,12 +51,12 @@ describe("Market.motivoSinCotizacion", () => {
   });
 
   // El orden importa: un panel caido no aparece en snapshot.panels, asi que
-  // sin este chequeo previo el ticker pareceria inexistente. La diferencia no
-  // es cosmetica: "no listado" invita a cargar precio manual y "panel caido"
-  // lo desaconseja.
-  it("un panel caido no se confunde con un ticker inexistente", () => {
+  // sin este chequeo previo la fila caeria en sin_cotizacion. La diferencia no
+  // es cosmetica: sin_cotizacion invita a cargar precio manual y panel_fallo
+  // lo desaconseja, porque el manual taparia la cotizacion al volver.
+  it("un panel caido no se confunde con un ticker sin cotizacion", () => {
     const motivo = Market.motivoSinCotizacion(pos(), conPanelCaido("arg_bonds"));
-    assert.notEqual(motivo, "no_listado", "diria que el ticker esta mal cuando no lo esta");
+    assert.notEqual(motivo, "sin_cotizacion", "recomendaria justo lo que no hay que hacer");
     assert.equal(motivo, "panel_fallo");
   });
 
@@ -69,9 +69,9 @@ describe("Market.motivoSinCotizacion", () => {
     assert.equal(Market.motivoSinCotizacion(pos(), snap), null);
   });
 
-  it("no_listado cuando el panel vino bien y el ticker no esta", () => {
+  it("sin_cotizacion cuando el panel vino bien y el ticker no figura", () => {
     const snap = snapshotCon({ arg_bonds: { OTRO: { c: 1 } } });
-    assert.equal(Market.motivoSinCotizacion(pos(), snap), "no_listado");
+    assert.equal(Market.motivoSinCotizacion(pos(), snap), "sin_cotizacion");
   });
 
   it("sin_precio cuando figura en el panel pero sin ultimo precio", () => {
@@ -147,8 +147,19 @@ describe("Format.avisosDeCartera", () => {
   });
 
   it("concuerda singular y plural", () => {
-    assert.match(Format.avisosDeCartera({ no_listado: 1 }, 0)[0], /1 ticker no figura/);
-    assert.match(Format.avisosDeCartera({ no_listado: 3 }, 0)[0], /3 tickers no figuran/);
+    assert.match(Format.avisosDeCartera({ sin_cotizacion: 1 }, 0)[0], /1 ticker\b/);
+    assert.match(Format.avisosDeCartera({ sin_cotizacion: 3 }, 0)[0], /3 tickers\b/);
+  });
+
+  // El ticker suele venir de un export del broker o de una foto de la cartera:
+  // existe. La app solo sabe que no lo encontro en el panel, asi que no puede
+  // afirmar que el simbolo este mal — culparia a los datos del usuario por algo
+  // que no le consta. Nombra la causa que si conoce: data912 no lo publica.
+  it("no acusa al ticker de estar mal: nombra la causa que si conoce", () => {
+    const [aviso] = Format.avisosDeCartera({ sin_cotizacion: 1 }, 0);
+    assert.match(aviso, /data912/, "deberia nombrar a la fuente que no publica el precio");
+    assert.doesNotMatch(aviso, /revisa el simbolo/i);
+    assert.doesNotMatch(aviso, /no (existe|figura)/i);
   });
 
   it("avisa de los manuales que tapan cotizacion aunque todo lo demas este bien", () => {
@@ -159,7 +170,7 @@ describe("Format.avisosDeCartera", () => {
 
   it("junta un aviso por causa cuando conviven varias", () => {
     const avisos = Format.avisosDeCartera(
-      { panel_fallo: 1, sin_panel: 1, no_listado: 1 }, 2);
+      { panel_fallo: 1, sin_panel: 1, sin_cotizacion: 1 }, 2);
     assert.ok(avisos.length >= 4, `esperaba un aviso por causa, hubo ${avisos.length}`);
     assert.match(avisos.join(" "), /total valorizado no incluye/i);
   });

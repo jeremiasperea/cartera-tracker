@@ -90,12 +90,17 @@ const Market = (() => {
     const panel = Config.getPanelForTipo(position.tipo);
     if (!panel) return "sin_panel";
 
-    // Antes que "no listado": si el panel fallo, no esta en snapshot.panels y
-    // el ticker pareceria inexistente cuando en realidad no se llego a pedir.
+    // Antes que "sin_cotizacion": si el panel fallo no esta en snapshot.panels,
+    // asi que el ticker pareceria no tener precio cuando en realidad ni se
+    // llego a pedir — y ahi se recomendaria el manual, que es lo contrario.
     if (snapshot.errores?.some((e) => e.panel === panel)) return "panel_fallo";
 
+    // "sin_cotizacion", no "ticker inexistente": el ticker suele venir de un
+    // export del broker, o sea que existe. Lo unico que sabe la app es que no
+    // lo encontro en el panel; afirmar que el simbolo esta mal es una
+    // inferencia que no puede sostener.
     const quote = snapshot.panels[panel]?.[position.ticker];
-    if (!quote) return "no_listado";
+    if (!quote) return "sin_cotizacion";
     if (quote.c == null) return "sin_precio";
     return null;
   }
@@ -177,8 +182,8 @@ const Format = (() => {
           "data912 no publica un panel para este tipo de instrumento. Va a necesitar precio manual siempre."],
         panel_fallo: ["panel caido",
           "El panel de este instrumento fallo en la ultima actualizacion. Reintenta en un rato; NO cargues precio manual, taparia la cotizacion cuando vuelva."],
-        no_listado: ["no listado",
-          "El panel se trajo bien pero este ticker no figura. Revisa que el simbolo sea correcto, o carga precio manual."],
+        sin_cotizacion: ["valor no encontrado",
+          "El panel se trajo bien pero data912 no publica precio para este ticker. Podes cargarle un precio manual para que valorice. (Si lo diste de alta a mano, chequea de paso que el simbolo sea el correcto.)"],
         sin_precio: ["sin operar",
           "El instrumento figura en el panel pero todavia no tiene ultimo precio."],
       };
@@ -206,10 +211,10 @@ const Format = (() => {
           "manual taparia la cotizacion real cuando el panel vuelva."
         );
       }
-      if (n("no_listado")) {
+      if (n("sin_cotizacion")) {
         avisos.push(
-          `${plural(n("no_listado"), "ticker no figura", "tickers no figuran")} en su panel. ` +
-          "Revisa el simbolo o carga precio manual."
+          `data912 no publica precio para ${plural(n("sin_cotizacion"), "ticker", "tickers")} ` +
+          "de tu cartera. Cargales precio manual si queres que valoricen."
         );
       }
       if (n("sin_panel")) {
