@@ -166,10 +166,24 @@ const Format = (() => {
       const r = s % 60;
       return `${m}:${String(r).padStart(2, "0")}`;
     },
+    // Escapa para CONTENIDO de texto. Ojo: el navegador no escapa comillas al
+    // pasar por textContent, asi que esto NO alcanza dentro de un atributo.
     escapeHtml(s) {
       const div = document.createElement("div");
       div.textContent = s ?? "";
       return div.innerHTML;
+    },
+
+    // Escapa para valor de ATRIBUTO entre comillas dobles. Sin escapar la
+    // comilla, un valor con `" onmouseover="` se sale del atributo e inyecta
+    // un handler; en este webview eso corre con window.__TAURI__ a mano.
+    escapeAttr(s) {
+      return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
     },
 
     // Etiqueta corta para la celda + explicacion completa en el title. Cada
@@ -188,7 +202,7 @@ const Format = (() => {
           "El instrumento figura en el panel pero todavia no tiene ultimo precio."],
       };
       const [corto, detalle] = textos[motivo] ?? ["sin datos", ""];
-      return `<span class="sin-datos" title="${detalle}">${corto}</span>`;
+      return `<span class="sin-datos" title="${this.escapeAttr(detalle)}">${corto}</span>`;
     },
 
     /**
@@ -317,8 +331,8 @@ const UI = (() => {
         <td class="num">${Format.money(r.valorizado)}</td>
         <td class="num ${claseRend}">${Format.money(r.rendimientoMonto)} (${Format.percentage(r.rendimientoPct)})</td>
         <td class="row-actions">
-          <button data-action="editar" data-id="${p.id}">Editar</button>
-          <button data-action="borrar" data-id="${p.id}">Borrar</button>
+          <button data-action="editar" data-id="${Format.escapeAttr(p.id)}">Editar</button>
+          <button data-action="borrar" data-id="${Format.escapeAttr(p.id)}">Borrar</button>
         </td>
       `;
       tbody.appendChild(tr);
@@ -521,8 +535,15 @@ const PortfolioOps = (() => {
         ? null
         : parseFloat(precioManualRaw);
 
+    // El id termina dentro de un atributo HTML, asi que no se acepta cualquier
+    // cosa del archivo importado: si no tiene la forma de un id generado por
+    // la app, se genera uno nuevo. Se pierde la identidad de esa fila, que es
+    // mucho mas barato que aceptar el valor. Los formatos propios —uuid v4 y
+    // p_<ts>_<hex>— pasan, asi que el ida y vuelta del export sigue andando.
+    const idSeguro = /^[A-Za-z0-9_-]{1,64}$/.test(String(raw.id ?? ""));
+
     return {
-      id: raw.id || generateId(),
+      id: idSeguro ? String(raw.id) : generateId(),
       ticker: String(raw.ticker ?? "").trim().toUpperCase(),
       nombre: String(raw.nombre ?? "").trim(),
       tipo,

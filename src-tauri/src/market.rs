@@ -119,14 +119,23 @@ pub fn read_snapshot(app: AppHandle) -> Option<MarketSnapshot> {
     serde_json::from_str(&raw).ok()
 }
 
-/// Segundos restantes de cooldown. 0 si ya se puede pedir cotizaciones de nuevo.
+/// Segundos que faltan para poder pedir cotizaciones de nuevo.
+///
+/// El techo de COOLDOWN_SECONDS no es decorativo: `last` sale de un archivo y
+/// `ahora` del reloj del sistema. Si el reloj se atrasa —cambio de huso, ajuste
+/// de NTP, la maquina volviendo de suspender— el tiempo transcurrido da
+/// negativo y sin el clamp el usuario quedaria bloqueado MAS de cinco minutos,
+/// potencialmente por horas, sin entender por que.
+fn cooldown_restante(last_fetch_ms: i64, ahora_ms: i64) -> i64 {
+    let elapsed_s = (ahora_ms - last_fetch_ms) / 1000;
+    (COOLDOWN_SECONDS - elapsed_s).clamp(0, COOLDOWN_SECONDS)
+}
+
 /// Se persiste en disco (no solo en memoria/frontend) para que cerrar y volver
 /// a abrir la app no resetee la espera.
 #[tauri::command]
 pub fn get_cooldown_status(app: AppHandle) -> i64 {
-    let last = read_last_fetch(&app);
-    let elapsed_s = (now_ms() - last) / 1000;
-    (COOLDOWN_SECONDS - elapsed_s).max(0)
+    cooldown_restante(read_last_fetch(&app), now_ms())
 }
 
 /// Trae cotizaciones de los paneles cubiertos por data912. Si el cooldown sigue
@@ -257,6 +266,43 @@ mod tests {
     fn corrupt_snapshot_json_deserializes_to_none() {
         assert!(serde_json::from_str::<MarketSnapshot>("{ no es json }").is_err());
         assert!(serde_json::from_str::<MarketSnapshot>("").is_err());
+    }
+
+    const AHORA: i64 = 1_786_000_000_000;
+
+    #[test]
+    fn cooldown_recien_pedido_espera_los_cinco_minutos() {
+        assert_eq!(cooldown_restante(AHORA, AHORA), COOLDOWN_SECONDS);
+    }
+
+    #[test]
+    fn cooldown_descuenta_el_tiempo_transcurrido() {
+        assert_eq!(cooldown_restante(AHORA - 60_000, AHORA), COOLDOWN_SECONDS - 60);
+        assert_eq!(cooldown_restante(AHORA - 299_000, AHORA), 1);
+    }
+
+    #[test]
+    fn cooldown_vencido_no_da_negativo() {
+        assert_eq!(cooldown_restante(AHORA - 300_000, AHORA), 0);
+        assert_eq!(cooldown_restante(AHORA - 999_999_000, AHORA), 0);
+    }
+
+    /// read_last_fetch devuelve 0 cuando el archivo no existe o esta corrupto:
+    /// tiene que leerse como "nunca se pidio", no como un cooldown gigante.
+    #[test]
+    fn sin_archivo_de_cooldown_se_puede_pedir_ya() {
+        assert_eq!(cooldown_restante(0, AHORA), 0);
+    }
+
+    /// El reloj se atraso respecto del ultimo fetch. Sin el clamp la espera
+    /// crece sin limite y la app queda trabada sin explicacion.
+    #[test]
+    fn un_reloj_atrasado_no_bloquea_mas_que_el_cooldown() {
+        let una_hora_adelante = AHORA + 3_600_000;
+        assert_eq!(cooldown_restante(una_hora_adelante, AHORA), COOLDOWN_SECONDS);
+
+        let un_año_adelante = AHORA + 31_536_000_000;
+        assert_eq!(cooldown_restante(un_año_adelante, AHORA), COOLDOWN_SECONDS);
     }
 
     /// Contrato con el frontend: app.js hace `err.kind === "cooldown"` y lee

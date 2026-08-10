@@ -50,6 +50,36 @@ export function instrumentTypesFromRust() {
   }));
 }
 
+/**
+ * Elemento que modela de verdad el par textContent -> innerHTML, porque de eso
+ * depende Format.escapeHtml.
+ *
+ * Un navegador escapa &, < y > al leer innerHTML, pero NO las comillas: por eso
+ * ese escape sirve para contenido de texto y no para valores de atributo.
+ * Emularlo mal daria tests que aprueban un escape roto.
+ */
+export function elementoDeTexto(registro) {
+  let texto = "";
+  let crudo = null;   // innerHTML asignado tal cual, sin re-escapar al leerlo
+  return {
+    set textContent(v) { texto = v == null ? "" : String(v); crudo = null; },
+    get textContent() { return texto; },
+    get innerHTML() {
+      if (crudo !== null) return crudo;
+      return texto.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    },
+    // Registrar lo asignado es lo que permite auditar el HTML que arma
+    // render(): sin esto no hay forma de comprobar que escapa lo que interpola.
+    set innerHTML(v) {
+      crudo = String(v);
+      if (registro) registro.push(crudo);
+    },
+    appendChild() {},
+    style: {},
+    dataset: {},
+  };
+}
+
 /** Stub de elemento DOM: devuelve algo encadenable para cualquier acceso. */
 function stubElement() {
   const el = new Proxy(
@@ -77,9 +107,13 @@ function stubElement() {
  *        minimo para que initialize() no explote.
  * @param {string[]} [opts.alerts]  Array donde se acumulan los alert().
  * @param {boolean}  [opts.confirm] Que devuelve confirm(). Default true.
+ * @param {string[]} [opts.htmlGenerado] Array donde se acumula cada innerHTML
+ *        que la app asigna a un elemento creado con createElement — o sea, el
+ *        HTML de las filas de la tabla, para poder auditar el escape.
  */
 export function loadApp(opts = {}) {
   const alerts = opts.alerts ?? [];
+  const htmlGenerado = opts.htmlGenerado ?? [];
   const tipos = instrumentTypesFromRust();
 
   const invoke = opts.invoke ?? (async (cmd) => {
@@ -94,7 +128,9 @@ export function loadApp(opts = {}) {
     window: { __TAURI__: { core: { invoke } } },
     document: {
       getElementById: () => stubElement(),
-      createElement: () => stubElement(),
+      // escapeHtml crea un div y usa textContent/innerHTML: ese par tiene que
+      // comportarse como el real o el test del escape no prueba nada.
+      createElement: () => elementoDeTexto(htmlGenerado),
       querySelector: () => stubElement(),
     },
     crypto: {
@@ -103,8 +139,8 @@ export function loadApp(opts = {}) {
     },
     alert: (msg) => alerts.push(String(msg)),
     confirm: () => opts.confirm ?? true,
-    setInterval: () => 0,
-    clearInterval: () => {},
+    setInterval: opts.reloj ? opts.reloj.setInterval : () => 0,
+    clearInterval: opts.reloj ? opts.reloj.clearInterval : () => {},
     setTimeout: (fn) => fn(),
     console,
     Blob: class {},
@@ -127,7 +163,10 @@ export function loadApp(opts = {}) {
     ctx
   );
 
-  return { ...Object.fromEntries(MODULOS.map((m) => [m, ctx[m]])), alerts, tipos };
+  return {
+    ...Object.fromEntries(MODULOS.map((m) => [m, ctx[m]])),
+    alerts, tipos, htmlGenerado,
+  };
 }
 
 /** Instancia con Config ya cargada — lo que necesita casi cualquier test. */
@@ -147,6 +186,28 @@ export async function loadAppReady(opts = {}) {
  */
 export function plano(valor) {
   return JSON.parse(JSON.stringify(valor));
+}
+
+/**
+ * Reloj falso para los intervalos: `avanzar(n)` dispara n tics a mano.
+ *
+ * La cuenta regresiva usa setInterval de a un segundo; esperarla de verdad
+ * haria un test de cinco minutos y ademas flaky.
+ */
+export function relojFalso() {
+  const activos = new Map();
+  let siguienteId = 1;
+  return {
+    setInterval: (fn) => { activos.set(siguienteId, fn); return siguienteId++; },
+    clearInterval: (id) => { activos.delete(id); },
+    /** Dispara `tics` vueltas de todos los intervalos vivos. */
+    avanzar(tics = 1) {
+      for (let i = 0; i < tics; i++) {
+        for (const fn of [...activos.values()]) fn();
+      }
+    },
+    get vivos() { return activos.size; },
+  };
 }
 
 /** Arma un MarketSnapshot con las cotizaciones indicadas. */

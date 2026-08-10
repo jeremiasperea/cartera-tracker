@@ -103,8 +103,8 @@ warning and falls back to software rendering.
 ## Test
 
 ```bash
-cd src-tauri && cargo test          # 7 tests (Rust)
-node --test 'test/*.test.mjs'       # 35 tests (JS, node:test — sin dependencias)
+cd src-tauri && cargo test          # 12 tests (Rust)
+node --test 'test/*.test.mjs'       # 120 tests (JS, node:test — sin dependencias)
 ```
 
 `test/helper.mjs` carga el `ui/app.js` real en un `node:vm` y devuelve sus
@@ -113,7 +113,7 @@ Lee `INSTRUMENT_TYPES` desde `config.rs`, de modo que un cambio en Rust no puede
 dejar los tests en verde por usar un fixture viejo.
 
 - **Pasá el glob.** `node --test` a secas también toma `test/helper.mjs` como
-  archivo de test y reporta un test fantasma de más (36 en vez de 35).
+  archivo de test y reporta un test fantasma de más.
 - **`assert.deepStrictEqual` falla entre realms.** Los arrays creados dentro del
   `vm` tienen otro `Array.prototype`, así que comparar contra `[]` da el
   desconcertante `actual: [] expected: []`. Usá `plano(x)` del helper.
