@@ -76,6 +76,30 @@ const Market = (() => {
     return snapshot.panels[panel]?.[position.ticker] ?? null;
   }
 
+  /**
+   * Por que esta fila no tiene precio. "Sin datos" a secas mezcla situaciones
+   * que piden acciones opuestas: un panel caido se arregla reintentando,
+   * mientras que cargar un precio manual ahi lo taparia para siempre, porque
+   * el manual le gana a la cotizacion viva.
+   *
+   * Devuelve null cuando si hay precio de mercado.
+   */
+  function motivoSinCotizacion(position, snapshot) {
+    if (!snapshot) return "sin_snapshot";
+
+    const panel = Config.getPanelForTipo(position.tipo);
+    if (!panel) return "sin_panel";
+
+    // Antes que "no listado": si el panel fallo, no esta en snapshot.panels y
+    // el ticker pareceria inexistente cuando en realidad no se llego a pedir.
+    if (snapshot.errores?.some((e) => e.panel === panel)) return "panel_fallo";
+
+    const quote = snapshot.panels[panel]?.[position.ticker];
+    if (!quote) return "no_listado";
+    if (quote.c == null) return "sin_precio";
+    return null;
+  }
+
   function computeRowMetrics(position, snapshot) {
     const quote = getQuoteForPosition(position, snapshot);
     const precioActual = position.precio_manual ?? quote?.c ?? null;
@@ -94,6 +118,11 @@ const Market = (() => {
       precioActual,
       esManual,
       sinCotizacion,
+      motivo: motivoSinCotizacion(position, snapshot),
+      // El precio manual esta ocultando una cotizacion viva. Suele ser el
+      // rastro de un manual cargado un dia que el panel estaba caido: el
+      // precio quedo congelado y nada lo delata.
+      manualTapaCotizacion: esManual && quote?.c != null,
       variacionDiaria: quote?.pct_change ?? null,
       valorizado,
       rendimientoMonto,
@@ -103,6 +132,7 @@ const Market = (() => {
 
   return {
     getQuoteForPosition,
+    motivoSinCotizacion,
     computeRowMetrics,
   };
 })();
@@ -136,6 +166,81 @@ const Format = (() => {
       div.textContent = s ?? "";
       return div.innerHTML;
     },
+
+    // Etiqueta corta para la celda + explicacion completa en el title. Cada
+    // motivo pide una accion distinta, por eso no comparten texto.
+    motivoSinCotizacion(motivo) {
+      const textos = {
+        sin_snapshot: ["sin actualizar",
+          "Todavia no trajiste cotizaciones en esta sesion. Apreta “Actualizar cotizaciones”."],
+        sin_panel: ["sin cobertura",
+          "data912 no publica un panel para este tipo de instrumento. Va a necesitar precio manual siempre."],
+        panel_fallo: ["panel caido",
+          "El panel de este instrumento fallo en la ultima actualizacion. Reintenta en un rato; NO cargues precio manual, taparia la cotizacion cuando vuelva."],
+        no_listado: ["no listado",
+          "El panel se trajo bien pero este ticker no figura. Revisa que el simbolo sea correcto, o carga precio manual."],
+        sin_precio: ["sin operar",
+          "El instrumento figura en el panel pero todavia no tiene ultimo precio."],
+      };
+      const [corto, detalle] = textos[motivo] ?? ["sin datos", ""];
+      return `<span class="sin-datos" title="${detalle}">${corto}</span>`;
+    },
+
+    /**
+     * Un aviso por causa, cada uno con su accion. Antes era un solo texto que
+     * enumeraba las causas posibles sin saber cual era: el usuario tenia que
+     * adivinar si le convenia reintentar o cargar un precio a mano.
+     */
+    avisosDeCartera(motivos, manualesTapando) {
+      const n = (m) => motivos[m] ?? 0;
+      const plural = (c, s, p) => `${c} ${c === 1 ? s : p}`;
+      const avisos = [];
+
+      if (n("sin_snapshot")) {
+        avisos.push("Todavia no trajiste cotizaciones: apreta “Actualizar cotizaciones”.");
+      }
+      if (n("panel_fallo")) {
+        avisos.push(
+          `${plural(n("panel_fallo"), "posicion quedo", "posiciones quedaron")} sin precio porque ` +
+          "su panel fallo en la ultima actualizacion. Reintenta en un rato: cargarles precio " +
+          "manual taparia la cotizacion real cuando el panel vuelva."
+        );
+      }
+      if (n("no_listado")) {
+        avisos.push(
+          `${plural(n("no_listado"), "ticker no figura", "tickers no figuran")} en su panel. ` +
+          "Revisa el simbolo o carga precio manual."
+        );
+      }
+      if (n("sin_panel")) {
+        avisos.push(
+          `${plural(n("sin_panel"), "posicion no tiene", "posiciones no tienen")} cobertura en ` +
+          "data912 por su tipo. Solo van a valorizar con precio manual."
+        );
+      }
+      if (n("sin_precio")) {
+        avisos.push(
+          `${plural(n("sin_precio"), "instrumento figura", "instrumentos figuran")} en el panel ` +
+          "pero todavia sin ultimo precio."
+        );
+      }
+      if (manualesTapando) {
+        avisos.push(
+          `${plural(manualesTapando, "posicion tiene", "posiciones tienen")} precio manual ` +
+          "tapando una cotizacion de mercado disponible. Borra el precio manual para usar la real."
+        );
+      }
+      if (avisos.length && Object.keys(motivos).length) {
+        avisos.push("El total valorizado no incluye las posiciones sin precio.");
+      }
+      return avisos;
+    },
+
+    etiquetaManual(tapaCotizacion) {
+      return tapaCotizacion
+        ? ' <span class="tag warn" title="Hay cotizacion de mercado disponible para este ticker, pero el precio manual la esta tapando. Borra el precio manual para usar la del mercado.">manual ⚠</span>'
+        : ' <span class="tag">manual</span>';
+    },
   };
 })();
 
@@ -164,15 +269,17 @@ const UI = (() => {
 
     let totalValorizado = 0;
     let totalGasto = 0;
-    let huboSinCotizacion = false;
+    const motivos = {};
+    let manualesTapando = 0;
 
     for (const p of positions) {
       const r = Market.computeRowMetrics(p, snapshot);
       if (!r.sinCotizacion) {
         totalValorizado += r.valorizado;
         totalGasto += p.cantidad * p.precio_compra;
+        if (r.manualTapaCotizacion) manualesTapando++;
       } else {
-        huboSinCotizacion = true;
+        motivos[r.motivo] = (motivos[r.motivo] ?? 0) + 1;
       }
 
       const tr = document.createElement("tr");
@@ -197,9 +304,9 @@ const UI = (() => {
         <td class="num">${Format.money(p.precio_compra)}</td>
         <td class="num">${
           r.sinCotizacion
-            ? "sin datos"
+            ? Format.motivoSinCotizacion(r.motivo)
             : Format.money(r.precioActual) +
-              (r.esManual ? ' <span class="tag">manual</span>' : "")
+              (r.esManual ? Format.etiquetaManual(r.manualTapaCotizacion) : "")
         }</td>
         <td class="num ${claseVar}">${Format.percentage(r.variacionDiaria)}</td>
         <td class="num">${Format.money(r.valorizado)}</td>
@@ -222,14 +329,9 @@ const UI = (() => {
       `${Format.money(rendTotalMonto)} (${Format.percentage(rendTotalPct)})`;
 
     const warning = document.getElementById("market-warning");
-    if (huboSinCotizacion) {
-      warning.hidden = false;
-      warning.textContent =
-        "Hay posiciones sin cotizacion automatica (no cubiertas por data912, o todavia no actualizaste). " +
-        "El total valorizado no las incluye salvo que cargues un precio manual.";
-    } else {
-      warning.hidden = true;
-    }
+    const avisos = Format.avisosDeCartera(motivos, manualesTapando);
+    warning.hidden = avisos.length === 0;
+    warning.textContent = avisos.join(" ");
   }
 
   function renderMarketMeta() {
@@ -243,7 +345,10 @@ const UI = (() => {
     const fecha = new Date(snapshot.fetched_at_ms);
     let texto = `Ultima actualizacion: ${fecha.toLocaleString("es-AR")}.`;
     if (snapshot.errores?.length) {
-      texto += ` Fallaron ${snapshot.errores.length} panel(es): ${snapshot.errores.join(" / ")}`;
+      const detalle = snapshot.errores
+        .map((e) => `${e.panel} (${e.mensaje})`)
+        .join(" / ");
+      texto += ` Fallaron ${snapshot.errores.length} panel(es): ${detalle}`;
     }
     meta.textContent = texto;
   }

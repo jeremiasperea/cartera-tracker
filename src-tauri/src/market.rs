@@ -31,6 +31,19 @@ pub struct Quote {
     pub px_ask: Option<f64>,
 }
 
+/// Un panel que no se pudo traer en este refresh.
+///
+/// `panel` va aparte del mensaje a proposito: el frontend cruza ese campo con
+/// el panel de cada posicion para distinguir "data912 no cubre esto" (que se
+/// arregla con precio_manual) de "el panel se cayo recien" (que se arregla
+/// reintentando). Con un solo string habria que parsear un prefijo, que es la
+/// convencion que ya sacamos de fetch_quotes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PanelError {
+    pub panel: String,
+    pub mensaje: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MarketSnapshot {
     pub fetched_at_ms: i64,
@@ -39,7 +52,7 @@ pub struct MarketSnapshot {
     /// paneles que fallaron (red, formato inesperado, etc). No aborta todo
     /// el refresh: mejor traer lo que se pueda y avisar que hubo un problema
     /// parcial, en vez de dejar al usuario sin nada.
-    pub errores: Vec<String>,
+    pub errores: Vec<PanelError>,
 }
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -150,10 +163,19 @@ pub async fn fetch_quotes(app: AppHandle) -> Result<MarketSnapshot, MarketError>
                         quotes.into_iter().map(|q| (q.symbol.clone(), q)).collect();
                     panels.insert(panel.to_string(), map);
                 }
-                Err(e) => errores.push(format!("{panel}: respuesta con formato inesperado ({e})")),
+                Err(e) => errores.push(PanelError {
+                    panel: panel.to_string(),
+                    mensaje: format!("respuesta con formato inesperado ({e})"),
+                }),
             },
-            Ok(resp) => errores.push(format!("{panel}: HTTP {}", resp.status())),
-            Err(e) => errores.push(format!("{panel}: fallo de red ({e})")),
+            Ok(resp) => errores.push(PanelError {
+                panel: panel.to_string(),
+                mensaje: format!("HTTP {}", resp.status()),
+            }),
+            Err(e) => errores.push(PanelError {
+                panel: panel.to_string(),
+                mensaje: format!("fallo de red ({e})"),
+            }),
         }
     }
 
@@ -201,7 +223,10 @@ mod tests {
         MarketSnapshot {
             fetched_at_ms: 1_770_000_000_000,
             panels,
-            errores: vec!["arg_bonds: HTTP 503".to_string()],
+            errores: vec![PanelError {
+                panel: "arg_bonds".to_string(),
+                mensaje: "HTTP 503".to_string(),
+            }],
         }
     }
 
@@ -214,7 +239,9 @@ mod tests {
         let restored: MarketSnapshot = serde_json::from_str(&raw).expect("deserializa");
 
         assert_eq!(restored.fetched_at_ms, original.fetched_at_ms);
-        assert_eq!(restored.errores, original.errores);
+        assert_eq!(restored.errores.len(), 1);
+        assert_eq!(restored.errores[0].panel, "arg_bonds");
+        assert_eq!(restored.errores[0].mensaje, "HTTP 503");
 
         let quote = &restored.panels["arg_stocks"]["GGAL"];
         assert_eq!(quote.symbol, "GGAL");

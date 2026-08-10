@@ -162,6 +162,19 @@ tbody tr:hover {
   margin-left: 4px;
 }
 
+/* El precio manual esta tapando una cotizacion real disponible. */
+.tag.warn {
+  color: var(--loss);
+  border-color: var(--loss);
+}
+
+/* Motivo por el que la fila no tiene precio; el detalle va en el title. */
+.sin-datos {
+  color: var(--text-muted);
+  border-bottom: 1px dotted var(--text-muted);
+  cursor: help;
+}
+
 .row-actions {
   display: flex;
   gap: 6px;
